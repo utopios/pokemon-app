@@ -1,0 +1,105 @@
+version: "3.8"
+
+services:
+  fastapp:
+    build: ./fastapp
+    container_name: fastapp
+    command: bash -c "./wait-for-rabbitmq.sh && uvicorn main:app --host 0.0.0.0 --port 80 --reload"
+    volumes:
+      - ./fastapp:/code
+    ports:
+      - 8000:80
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@spoon-rabbitmq/
+      MONGODB_URI: mongodb://spoon-mongo:27017/spoon
+      POKEMON_ROUTING_KEY: pokemon
+
+  dollop:
+    build: ./dollop
+    container_name: dollop
+    command: sh -c "yarn --dev && ./wait-for.sh spoon-rabbitmq:5672 -- yarn dev"
+    volumes:
+      - ./dollop:/code
+    ports:
+      - 3000:80
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@spoon-rabbitmq/
+      MONGODB_URI: mongodb://spoon-mongo:27017/spoon
+      POKEMON_ROUTING_KEY: pokemon
+    depends_on:
+      - rabbitmq
+      - mongo
+    links:
+      - rabbitmq:rabbitmq
+
+  glimmer:
+    build: ./glimmer
+    container_name: glimmer
+    command: sh -c "yarn --dev && yarn dev"
+    # command: sh -c "yarn build && yarn start"
+    volumes:
+      - ./glimmer:/usr/app
+      - ./glimmer/node_modules:/usr/app/node_modules
+    ports:
+      - 3001:80
+    environment:
+      PORT: 80
+
+  goapp:
+    build: ./goapp
+    container_name: goapp
+    command: sh -c "./wait-for.sh spoon-rabbitmq:5672 && go run main.go"
+    volumes:
+      - ./goapp:/go/src/goapp
+    working_dir: /go/src/goapp
+    environment:
+      PORT: 80
+      MONGODB_URI: mongodb://spoon-mongo:27017/spoon
+      RABBITMQ_URL: amqp://guest:guest@spoon-rabbitmq/
+      POKEMON_ROUTING_KEY: pokemon
+    depends_on:
+      - rabbitmq
+    ports:
+      - 8090:80
+
+  nginx:
+    image: nginx:1.19
+    container_name: spoon-proxy
+    volumes:
+      - ./proxy/nginx.conf:/etc/nginx/nginx.conf
+      - ./proxy/default.conf:/etc/nginx/conf.d/default.conf
+    ports:
+      - 80:80
+    links:
+      - glimmer:glimmer
+      - fastapp:fastapp
+      - goapp:goapp
+    networks:
+      default:
+        aliases:
+          - pokemon.local.com
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: spoon-rabbitmq
+    volumes:
+      - rabbitmq_etc:/etc/rabbitmq/
+      - rabbitmq_data:/var/lib/rabbitmq/
+      - rabbitmq_logs:/var/log/rabbitmq/
+    ports:
+      - 5672:5672
+      - 15672:15672
+
+  mongo:
+    container_name: spoon-mongo
+    image: mongo
+    ports:
+      - 27017:27017
+    volumes:
+      - mongodb-data:/data/db
+
+volumes:
+  rabbitmq_etc:
+  rabbitmq_data:
+  rabbitmq_logs:
+  mongodb-data:
